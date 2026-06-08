@@ -62,6 +62,8 @@ local `.env` file on startup.
 | `LNURL_MAX_SENDABLE` | no | `11000000000` | Maximum LNURL amount in millisatoshis |
 | `LNURL_DOMAIN` | no | `localhost:3000` | Public domain used in LNURL callbacks and Lightning addresses |
 
+Arkade addresses require a minimum amount of `333000` millisatoshis.
+
 Example `.env`:
 
 ```env
@@ -152,7 +154,8 @@ GET /get-invoice/:address?amount=1000
 ```
 
 `amount` is required and is denominated in millisatoshis. Invoices are generated
-for whole sats, so the amount must be divisible by `1000`.
+for whole sats, so the amount must be divisible by `1000`. Arkade addresses
+require at least `333000` millisatoshis.
 
 Optional query parameters:
 

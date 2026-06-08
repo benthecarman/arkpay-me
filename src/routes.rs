@@ -24,6 +24,7 @@ use std::time::SystemTime;
 
 const MAX_COMMENT_LEN: usize = 100;
 const MAX_NOSTR_PARAM_LEN: usize = 16 * 1024;
+const ARKADE_MIN_SENDABLE_MSATS: u64 = 333_000;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,7 +60,11 @@ pub(crate) async fn get_invoice_impl(
         return Err(anyhow!("Missing amount parameter"));
     }
     let amount_msats = params.amount.unwrap();
-    validate_amount_msats(amount_msats, state.min_sendable, state.max_sendable)?;
+    validate_amount_msats(
+        amount_msats,
+        address.min_sendable_msats(state.min_sendable),
+        state.max_sendable,
+    )?;
 
     let mut zap_request = None;
     let _invoice_description = match params.nostr.as_ref() {
@@ -300,6 +305,15 @@ enum ReceiveAddress {
     Arkade(ark_core::ArkAddress),
 }
 
+impl ReceiveAddress {
+    fn min_sendable_msats(&self, configured_min_sendable: u64) -> u64 {
+        match self {
+            ReceiveAddress::Bark(_) => configured_min_sendable,
+            ReceiveAddress::Arkade(_) => configured_min_sendable.max(ARKADE_MIN_SENDABLE_MSATS),
+        }
+    }
+}
+
 impl Display for ReceiveAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -349,11 +363,13 @@ pub async fn get_lnurl_pay(
     Extension(state): Extension<State>,
 ) -> Result<Json<PayResponse>, (StatusCode, Json<Value>)> {
     let address = match parse_receive_address(&address) {
-        Ok(address) => address.to_string(),
+        Ok(address) => address,
         Err(e) => {
             return Err(handle_anyhow_error(e));
         }
     };
+    let min_sendable = address.min_sendable_msats(state.min_sendable);
+    let address = address.to_string();
 
     let metadata = calc_metadata(&address, &state.domain);
 
@@ -361,7 +377,7 @@ pub async fn get_lnurl_pay(
 
     let resp = PayResponse {
         callback,
-        min_sendable: state.min_sendable,
+        min_sendable,
         max_sendable: state.max_sendable,
         tag: Tag::PayRequest,
         metadata,
@@ -721,6 +737,18 @@ mod tests {
     }
 
     #[test]
+    fn amount_validation_rejects_amounts_below_arkade_minimum() {
+        assert_eq!(
+            validate_amount_msats(332_000, ARKADE_MIN_SENDABLE_MSATS, 1_000_000)
+                .unwrap_err()
+                .to_string(),
+            "Amount out of bounds"
+        );
+        validate_amount_msats(ARKADE_MIN_SENDABLE_MSATS, ARKADE_MIN_SENDABLE_MSATS, 1_000_000)
+            .unwrap();
+    }
+
+    #[test]
     fn ark_address_validation_rejects_empty_or_invalid_addresses() {
         assert_eq!(
             validate_ark_address("").unwrap_err().to_string(),
@@ -739,6 +767,15 @@ mod tests {
         let address = "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
         let parsed = parse_receive_address(address).unwrap();
         assert_eq!(parsed.to_string(), address);
+    }
+
+    #[test]
+    fn arkade_addresses_use_at_least_333_sat_minimum() {
+        let address = "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
+        let parsed = parse_receive_address(address).unwrap();
+
+        assert_eq!(parsed.min_sendable_msats(1_000), ARKADE_MIN_SENDABLE_MSATS);
+        assert_eq!(parsed.min_sendable_msats(500_000), 500_000);
     }
 
     #[test]
