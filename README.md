@@ -1,19 +1,26 @@
-# lnurl-bark
+# arkpay-me
 
-`lnurl-bark` is a small LNURL-pay server for Bark. It gives every Ark address a
-deterministic Lightning address, serves LNURL-pay metadata, and asks `barkd` to
-generate BOLT11 invoices for incoming payments.
+`arkpay-me` is a small LNURL-pay server for Bark and Arkade. It gives every
+supported Ark address a deterministic Lightning address, serves LNURL-pay
+metadata, and generates BOLT11 invoices for incoming payments.
 
-The service also stores invoices and optional Nostr zap requests in Postgres,
-then periodically checks `barkd` for paid invoices and marks them settled.
+For Bark addresses, the service asks `barkd` to generate invoices and checks
+`barkd` for payment settlement. For Arkade addresses, it uses the Arkade Rust SDK
+receive-for-user flow to create reverse-swap invoices and claim the resulting
+VHTLC output to the recipient Arkade address.
+
+Invoices, SDK swap state, and optional Nostr zap requests are persisted in
+Postgres.
 
 ## Features
 
-- LNURL-pay metadata at `/.well-known/lnurlp/:ark_address`
-- Invoice generation at `/get-invoice/:ark_address`
+- LNURL-pay metadata at `/.well-known/lnurlp/:address`
+- Invoice generation at `/get-invoice/:address`
+- Bark address support through `barkd`
+- Arkade address support through the Arkade SDK receive-for-user branch
 - Optional Nostr zap request storage
 - Postgres persistence through Diesel migrations
-- `barkd` REST API integration
+- Settlement verification at `/verify/:desc_hash/:payment_hash`
 
 ## Prerequisites
 
@@ -21,6 +28,9 @@ then periodically checks `barkd` for paid invoices and marks them settled.
 - Postgres
 - Diesel CLI with Postgres support
 - A reachable `barkd` REST API
+- A reachable Arkade server
+- A reachable Boltz endpoint compatible with Arkade reverse swaps
+- An Arkade BIP32 xpriv used to claim reverse-swap VHTLCs
 - A Nostr `nsec` key for zap metadata
 
 Install Diesel CLI if needed:
@@ -55,7 +65,7 @@ local `.env` file on startup.
 Example `.env`:
 
 ```env
-LNURL_PG_URL=postgres://postgres:postgres@127.0.0.1:5432/lnurl_bark
+LNURL_PG_URL=postgres://postgres:postgres@127.0.0.1:5432/arkpay_me
 LNURL_NSEC=nsec...
 LNURL_BARKD_URL=http://127.0.0.1:3535
 LNURL_BARKD_TOKEN=
@@ -78,11 +88,12 @@ export DATABASE_URL="$LNURL_PG_URL"
 Create the database, then run migrations:
 
 ```sh
-createdb lnurl_bark
+createdb arkpay_me
 diesel migration run
 ```
 
-The migrations create `invoice` and `zaps` tables.
+The migrations create Bark invoice/zap tables, Arkade invoice/zap tables, and
+an Arkade SDK swap-storage table.
 
 ## Running
 
@@ -96,9 +107,12 @@ You can also pass configuration as flags:
 
 ```sh
 cargo run -- \
-  --pg-url postgres://postgres:postgres@127.0.0.1:5432/lnurl_bark \
+  --pg-url postgres://postgres:postgres@127.0.0.1:5432/arkpay_me \
   --nsec nsec... \
   --barkd-url http://127.0.0.1:3535 \
+  --arkade-xpriv xprv... \
+  --arkade-server-url http://127.0.0.1:7070 \
+  --arkade-boltz-url http://127.0.0.1:9001 \
   --domain example.com
 ```
 
@@ -119,13 +133,13 @@ Returns a simple health response:
 }
 ```
 
-Any valid Bark or Arkade address can receive payments at the Lightning address
-`<ark_address>@example.com` when `LNURL_DOMAIN=example.com`.
+Any valid Bark or Arkade address can receive payments at
+`<address>@example.com` when `LNURL_DOMAIN=example.com`.
 
 ### LNURL-Pay Metadata
 
 ```http
-GET /.well-known/lnurlp/ark...
+GET /.well-known/lnurlp/:address
 ```
 
 Returns the LNURL-pay callback, amount limits, metadata, and Nostr zap support
@@ -134,10 +148,10 @@ information for the Bark or Arkade address.
 ### Generate Invoice
 
 ```http
-GET /get-invoice/ark...?amount=1000
+GET /get-invoice/:address?amount=1000
 ```
 
-`amount` is required and is denominated in millisatoshis. Bark invoices must be
+`amount` is required and is denominated in millisatoshis. Invoices are generated
 for whole sats, so the amount must be divisible by `1000`.
 
 Optional query parameters:
@@ -154,9 +168,9 @@ URL for checking settlement status.
 GET /verify/:desc_hash/:payment_hash
 ```
 
-Returns `settled: true` and the payment `preimage` once Bark has revealed the
-preimage for the invoice. Pending, expired, or cancelled invoices return
-`settled: false`.
+Returns `settled: true` and the payment `preimage` once the Bark or Arkade
+backend has revealed and stored the preimage for the invoice. Pending, expired,
+or cancelled invoices return `settled: false`.
 
 ## Development
 
@@ -170,7 +184,7 @@ Database-backed migration/model tests are enabled when `LNURL_TEST_DATABASE_URL`
 points at a Postgres database the test process can create schemas in:
 
 ```sh
-LNURL_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/lnurl_bark_test cargo test
+LNURL_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/arkpay_me_test cargo test
 ```
 
 These tests create and drop isolated temporary schemas inside that database.
