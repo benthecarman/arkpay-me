@@ -8,12 +8,10 @@ use axum::extract::{Path, Query};
 use axum::http::{StatusCode, Uri};
 use axum::response::Html;
 use axum::{Extension, Json};
-use bitcoin::hashes::{sha256, Hash};
 use bitcoin::Network;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::Connection;
 use lightning_invoice::Bolt11Invoice;
-use lightning_invoice::Bolt11InvoiceDescriptionRef;
 use lnurl::pay::PayResponse;
 use lnurl::Tag;
 use log::error;
@@ -267,7 +265,7 @@ pub async fn root() -> Html<&'static str> {
       <ul class="endpoints">
         <li><span class="method">GET</span><code>/.well-known/lnurlp/:address</code></li>
         <li><span class="method">GET</span><code>/get-invoice/:address?amount=1000</code></li>
-        <li><span class="method">GET</span><code>/verify/:desc_hash/:payment_hash</code></li>
+        <li><span class="method">GET</span><code>/verify/:address/:payment_hash</code></li>
         <li><span class="method">GET</span><code>/health-check</code></li>
       </ul>
     </section>
@@ -295,7 +293,7 @@ pub struct LnurlCallbackParams {
 ///
 /// # Parameters
 /// * `state` - Application state containing LND client and configuration
-/// * `hash` - A description hash or identifier for the invoice
+/// * `address` - Receive address that the invoice is for
 /// * `amount_msats` - The invoice amount in millisatoshis
 /// * `zap_request` - Optional Nostr zap request event
 ///
@@ -474,7 +472,7 @@ fn invoice_expires_at(invoice: &Bolt11Invoice) -> Option<NaiveDateTime> {
 /// This route handles the callback phase of the LNURL-pay protocol.
 ///
 /// # Parameters
-/// * `hash` - Path parameter containing the description hash
+/// * `ark_address` - Path parameter containing the receive address
 /// * `params` - Query parameters including the amount and optional zap request
 /// * `state` - Application state
 ///
@@ -489,9 +487,11 @@ pub async fn get_invoice(
 
     match get_invoice_impl(&state, &ark_address, params).await {
         Ok(invoice) => {
-            let desc_hash = invoice_description_hash(&invoice);
             let payment_hash = invoice.payment_hash().to_string();
-            let verify_url = format!("https://{}/verify/{desc_hash}/{payment_hash}", state.domain);
+            let verify_url = format!(
+                "https://{}/verify/{ark_address}/{payment_hash}",
+                state.domain
+            );
             Ok(Json(json!({
                 "status": "OK",
                 "pr": invoice,
@@ -512,15 +512,6 @@ pub fn calc_metadata(ark_address: &str, domain: &str) -> String {
     format!(
         "[[\"text/identifier\",\"{ark_address}@{domain}\"],[\"text/plain\",\"Sats for {ark_address}\"]]",
     )
-}
-
-fn invoice_description_hash(invoice: &Bolt11Invoice) -> String {
-    match invoice.description() {
-        Bolt11InvoiceDescriptionRef::Direct(description) => {
-            sha256::Hash::hash(description.to_string().as_bytes()).to_string()
-        }
-        Bolt11InvoiceDescriptionRef::Hash(hash) => hex::encode(hash.0.to_byte_array()),
-    }
 }
 
 fn validate_amount_msats(
@@ -678,16 +669,21 @@ pub async fn get_lnurl_pay(
 /// This route is called by clients to check if an invoice has been paid.
 ///
 /// # Parameters
-/// * `desc_hash` and `pay_hash` - Path parameters for the description hash and payment hash
+/// * `address` and `pay_hash` - Path parameters for the receive address and payment hash
 /// * `state` - Application state with LND client
 ///
 /// # Returns
 /// A JSON response indicating settlement status and preimage (if settled), or an error response
 pub async fn verify(
-    Path((desc_hash, pay_hash)): Path<(String, String)>,
+    Path((address, pay_hash)): Path<(String, String)>,
     Extension(state): Extension<State>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    validate_hex_hash(&desc_hash, "Invalid description hash")?;
+    let address = parse_receive_address(&address).map_err(handle_anyhow_error)?;
+    address
+        .validate_network(state.network)
+        .map_err(handle_anyhow_error)?;
+    let address = address.to_string();
+
     validate_hex_hash(&pay_hash, "Invalid payment hash")?;
 
     let mut invoice = find_invoice_by_payment_hash(&state, &pay_hash)?;
@@ -698,7 +694,7 @@ pub async fn verify(
     }
 
     let bolt11 = invoice.bolt11();
-    if !invoice_description_hash(&bolt11).eq_ignore_ascii_case(&desc_hash) {
+    if invoice.address() != address {
         return Ok(Json(not_found_response()));
     }
 
@@ -739,6 +735,13 @@ enum FoundInvoice {
 }
 
 impl FoundInvoice {
+    fn address(&self) -> &str {
+        match self {
+            FoundInvoice::Bark(invoice) => &invoice.ark_address,
+            FoundInvoice::Arkade(invoice) => &invoice.recipient_address,
+        }
+    }
+
     fn state(&self) -> i32 {
         match self {
             FoundInvoice::Bark(invoice) => invoice.state,

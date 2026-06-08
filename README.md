@@ -20,7 +20,7 @@ Postgres.
 - Arkade address support through the Arkade SDK receive-for-user branch
 - Optional Nostr zap request storage
 - Postgres persistence through Diesel migrations
-- Settlement verification at `/verify/:desc_hash/:payment_hash`
+- Settlement verification at `/verify/:address/:payment_hash`
 
 ## Prerequisites
 
@@ -182,7 +182,7 @@ URL for checking settlement status.
 ### Verify Invoice
 
 ```http
-GET /verify/:desc_hash/:payment_hash
+GET /verify/:address/:payment_hash
 ```
 
 Returns `settled: true` and the payment `preimage` once the Bark or Arkade

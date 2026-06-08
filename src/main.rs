@@ -121,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(root))
         .route("/health-check", get(health_check))
         .route("/get-invoice/:ark_address", get(get_invoice))
-        .route("/verify/:desc_hash/:pay_hash", get(verify))
+        .route("/verify/:address/:pay_hash", get(verify))
         .route("/.well-known/lnurlp/:ark_address", get(get_lnurl_pay))
         .fallback(fallback)
         .layer(Extension(state.clone()))
