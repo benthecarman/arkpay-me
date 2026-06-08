@@ -8,6 +8,7 @@ use axum::extract::{Path, Query};
 use axum::http::{StatusCode, Uri};
 use axum::{Extension, Json};
 use bitcoin::hashes::{sha256, Hash};
+use bitcoin::Network;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::Connection;
 use lightning_invoice::Bolt11Invoice;
@@ -54,6 +55,7 @@ pub(crate) async fn get_invoice_impl(
     params: LnurlCallbackParams,
 ) -> anyhow::Result<Bolt11Invoice> {
     let address = parse_receive_address(address)?;
+    address.validate_network(state.network)?;
     validate_callback_params(&params)?;
 
     if params.amount.is_none() {
@@ -312,6 +314,20 @@ impl ReceiveAddress {
             ReceiveAddress::Arkade(_) => configured_min_sendable.max(ARKADE_MIN_SENDABLE_MSATS),
         }
     }
+
+    fn validate_network(&self, network: Network) -> anyhow::Result<()> {
+        let expects_test_address = network != Network::Bitcoin;
+        let is_test_address = match self {
+            ReceiveAddress::Bark(address) => address.is_testnet(),
+            ReceiveAddress::Arkade(address) => address.to_string().starts_with("tark"),
+        };
+
+        if is_test_address != expects_test_address {
+            return Err(anyhow!("Address is not valid for configured network"));
+        }
+
+        Ok(())
+    }
 }
 
 impl Display for ReceiveAddress {
@@ -368,6 +384,9 @@ pub async fn get_lnurl_pay(
             return Err(handle_anyhow_error(e));
         }
     };
+    address
+        .validate_network(state.network)
+        .map_err(handle_anyhow_error)?;
     let min_sendable = address.min_sendable_msats(state.min_sendable);
     let address = address.to_string();
 
@@ -776,6 +795,22 @@ mod tests {
 
         assert_eq!(parsed.min_sendable_msats(1_000), ARKADE_MIN_SENDABLE_MSATS);
         assert_eq!(parsed.min_sendable_msats(500_000), 500_000);
+    }
+
+    #[test]
+    fn arkade_address_validation_rejects_wrong_network() {
+        let address = "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
+        let parsed = parse_receive_address(address).unwrap();
+
+        parsed.validate_network(Network::Signet).unwrap();
+        parsed.validate_network(Network::Regtest).unwrap();
+        assert_eq!(
+            parsed
+                .validate_network(Network::Bitcoin)
+                .unwrap_err()
+                .to_string(),
+            "Address is not valid for configured network"
+        );
     }
 
     #[test]

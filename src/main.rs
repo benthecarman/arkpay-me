@@ -45,6 +45,7 @@ pub struct State {
 
     // -- config options --
     pub domain: String,
+    pub network: bitcoin::Network,
     pub min_sendable: u64,
     pub max_sendable: u64,
 }
@@ -92,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
         barkd,
         arkade,
         domain: config.domain,
+        network: config.network,
         min_sendable: config.min_sendable,
         max_sendable: config.max_sendable,
     };
