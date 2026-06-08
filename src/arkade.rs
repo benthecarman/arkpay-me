@@ -70,7 +70,7 @@ impl ArkadeClient {
             PostgresSwapStorage,
             Bip32KeyProvider,
         >::new_with_bip32(
-            "arkpay-me".to_string(),
+            "arkzap-me".to_string(),
             xpriv,
             None,
             Arc::new(NoopBlockchain),

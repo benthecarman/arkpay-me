@@ -1,6 +1,6 @@
-# arkpay-me
+# arkzap-me
 
-`arkpay-me` is a small LNURL-pay server for Bark and Arkade. It gives every
+`arkzap-me` is a small LNURL-pay server for Bark and Arkade. It gives every
 supported Ark address a deterministic Lightning address, serves LNURL-pay
 metadata, and generates BOLT11 invoices for incoming payments.
 
@@ -65,7 +65,7 @@ local `.env` file on startup.
 Example `.env`:
 
 ```env
-LNURL_PG_URL=postgres://postgres:postgres@127.0.0.1:5432/arkpay_me
+LNURL_PG_URL=postgres://postgres:postgres@127.0.0.1:5432/arkzap_me
 LNURL_NSEC=nsec...
 LNURL_BARKD_URL=http://127.0.0.1:3535
 LNURL_BARKD_TOKEN=
@@ -88,7 +88,7 @@ export DATABASE_URL="$LNURL_PG_URL"
 Create the database, then run migrations:
 
 ```sh
-createdb arkpay_me
+createdb arkzap_me
 diesel migration run
 ```
 
@@ -107,7 +107,7 @@ You can also pass configuration as flags:
 
 ```sh
 cargo run -- \
-  --pg-url postgres://postgres:postgres@127.0.0.1:5432/arkpay_me \
+  --pg-url postgres://postgres:postgres@127.0.0.1:5432/arkzap_me \
   --nsec nsec... \
   --barkd-url http://127.0.0.1:3535 \
   --arkade-xpriv xprv... \
@@ -184,7 +184,7 @@ Database-backed migration/model tests are enabled when `LNURL_TEST_DATABASE_URL`
 points at a Postgres database the test process can create schemas in:
 
 ```sh
-LNURL_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/arkpay_me_test cargo test
+LNURL_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/arkzap_me_test cargo test
 ```
 
 These tests create and drop isolated temporary schemas inside that database.

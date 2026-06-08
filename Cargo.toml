@@ -1,15 +1,15 @@
 [package]
-name = "arkpay-me"
+name = "arkzap-me"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/benthecarman/arkpay-me"
-homepage = "arkpay.me"
+repository = "https://github.com/benthecarman/arkzap-me"
+homepage = "arkzap.me"
 readme = "README.md"
 description = "A LNURL server for Bark and Arkade"
 
 [[bin]]
-name = "arkpay-me"
+name = "arkzap-me"
 path = "src/main.rs"
 
 [dependencies]
