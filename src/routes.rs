@@ -484,6 +484,9 @@ pub async fn get_invoice(
     Extension(state): Extension<State>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let amount_msats = params.amount;
+    let address_kind = parse_receive_address(&ark_address)
+        .map(|address| address.kind())
+        .unwrap_or("invalid");
 
     match get_invoice_impl(&state, &ark_address, params).await {
         Ok(invoice) => {
@@ -501,7 +504,7 @@ pub async fn get_invoice(
         }
         Err(e) => {
             error!(
-                "Error generating invoice for ark_address={ark_address} amount_msats={amount_msats:?}: {e:#}"
+                "Error generating invoice for ark_address={ark_address} address_kind={address_kind} amount_msats={amount_msats:?}: {e:#}"
             );
             Err(handle_anyhow_error(e))
         }
@@ -547,6 +550,13 @@ enum ReceiveAddress {
 }
 
 impl ReceiveAddress {
+    fn kind(&self) -> &'static str {
+        match self {
+            ReceiveAddress::Bark(_) => "bark",
+            ReceiveAddress::Arkade(_) => "arkade",
+        }
+    }
+
     fn min_sendable_msats(&self, configured_min_sendable: u64) -> u64 {
         match self {
             ReceiveAddress::Bark(_) => configured_min_sendable,
@@ -962,11 +972,19 @@ fn server_error_response() -> (StatusCode, Json<Value>) {
 /// # Returns
 /// A tuple containing a 400 Bad Request status code and a JSON error response
 pub(crate) fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, Json<Value>) {
+    let status = if err
+        .chain()
+        .any(|cause| cause.to_string().starts_with("barkd returned "))
+    {
+        StatusCode::BAD_GATEWAY
+    } else {
+        StatusCode::BAD_REQUEST
+    };
     let err = json!({
         "status": "ERROR",
         "reason": format!("{err}"),
     });
-    (StatusCode::BAD_REQUEST, Json(err))
+    (status, Json(err))
 }
 
 /// Fallback route handler that returns a 404 Not Found response
@@ -1073,6 +1091,14 @@ mod tests {
     }
 
     #[test]
+    fn receive_address_validation_accepts_bark_addresses() {
+        let address = "ark1pu6h30w3zqqplk5cnn4u9rl7ezmqcdyqjqxdkhn7q5acku3ctq48r7qzmgmxt6z3zqyps6f5kemv7aest5ekedtpmcl34n32vuagr4ufwdlw8ywzeagq7e4qqdv976";
+        let parsed = parse_receive_address(address).unwrap();
+        assert!(matches!(parsed, ReceiveAddress::Bark(_)));
+        assert_eq!(parsed.to_string(), address);
+    }
+
+    #[test]
     fn arkade_addresses_use_at_least_333_sat_minimum() {
         let address = "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
         let parsed = parse_receive_address(address).unwrap();
@@ -1106,6 +1132,20 @@ mod tests {
         assert_eq!(
             validate_callback_params(&params).unwrap_err().to_string(),
             "Nostr parameter is too large"
+        );
+    }
+
+    #[test]
+    fn upstream_barkd_errors_return_bad_gateway() {
+        let err = anyhow!("barkd returned 500 Internal Server Error: body={{}}")
+            .context("failed to generate barkd invoice for Ark address");
+
+        let (status, Json(body)) = handle_anyhow_error(err);
+
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            body["reason"],
+            "failed to generate barkd invoice for Ark address"
         );
     }
 
